@@ -1,0 +1,16 @@
+# Environment secrets
+.env
+
+# Dependencies
+node_modules/
+
+# Personal cloud files
+storage/
+
+# Local backups
+*.backup
+server-backup-*.js
+
+# Logs
+*.log
+npm-debug.log*
