@@ -6,30 +6,63 @@ const archiver = require("archiver");
 const session = require("express-session");
 const bcrypt = require("bcryptjs");
 const cors = require("cors");
+
 require("dotenv").config();
 
-const app = express();
-const PORT = 3000;
 
-const storageDir = path.resolve(__dirname, "storage");
+// ==================================================
+// ENVIRONMENT CONFIGURATION
+// ==================================================
 
+const requiredEnv = [
+    "SESSION_SECRET",
+    "CLOUD_USERNAME",
+    "CLOUD_PASSWORD"
+];
 
-/*
-==================================================
-CREATE STORAGE DIRECTORY
-==================================================
-*/
+const missingEnv = requiredEnv.filter(
+    (key) => !process.env[key]
+);
 
-if (!fs.existsSync(storageDir)) {
-    fs.mkdirSync(storageDir, { recursive: true });
+if (missingEnv.length > 0) {
+    console.error(
+        `Missing required environment variables: ${missingEnv.join(", ")}`
+    );
+
+    process.exit(1);
 }
 
 
-/*
-==================================================
-SECURITY FUNCTIONS
-==================================================
-*/
+// ==================================================
+// APP CONFIGURATION
+// ==================================================
+
+const app = express();
+
+app.disable("x-powered-by");
+
+const PORT = 3000;
+
+const storageDir = path.resolve(
+    __dirname,
+    "storage"
+);
+
+
+// ==================================================
+// CREATE STORAGE DIRECTORY
+// ==================================================
+
+if (!fs.existsSync(storageDir)) {
+    fs.mkdirSync(storageDir, {
+        recursive: true
+    });
+}
+
+
+// ==================================================
+// SECURITY FUNCTIONS
+// ==================================================
 
 // Safely convert a relative cloud path
 // into an absolute path inside storage/
@@ -40,6 +73,7 @@ function safeStoragePath(relativePath = "") {
     }
 
     relativePath = relativePath.replace(/\\/g, "/");
+
     relativePath = relativePath.replace(/^\/+/, "");
 
     const fullPath = path.resolve(
@@ -156,11 +190,9 @@ function getSafeDirectory(relativePath = "") {
 }
 
 
-/*
-==================================================
-MULTER STORAGE
-==================================================
-*/
+// ==================================================
+// MULTER STORAGE
+// ==================================================
 
 const multerStorage =
     multer.diskStorage({
@@ -292,31 +324,80 @@ const upload =
     });
 
 
-/*
-==================================================
-MIDDLEWARE
-==================================================
-*/
+// ==================================================
+// MIDDLEWARE
+// ==================================================
 
-app.use(express.json());
+app.use(
+    express.json()
+);
+
+
+// ==================================================
+// CORS
+// ==================================================
+
+const CORS_ORIGIN =
+    process.env.CORS_ORIGIN ||
+    "http://localhost:5500";
 
 app.use(
     cors({
-        origin: true,
+        origin: CORS_ORIGIN,
         credentials: true
     })
 );
 
 
+// ==================================================
+// SESSION CONFIGURATION
+// ==================================================
 
-/*
-==================================================
-SESSION
-==================================================
-*/
+const COOKIE_SECURE =
+    process.env.COOKIE_SECURE === "true";
+
+const COOKIE_SAME_SITE =
+    process.env.COOKIE_SAME_SITE || "lax";
+
+
+if (
+    !["lax", "strict", "none"]
+        .includes(COOKIE_SAME_SITE)
+) {
+
+    console.error(
+        "COOKIE_SAME_SITE must be one of: lax, strict, none"
+    );
+
+    process.exit(1);
+}
+
+
+// Required when secure cookies are used
+// behind a reverse proxy such as ngrok.
+if (COOKIE_SECURE) {
+    app.set("trust proxy", 1);
+}
+
+
+const sessionCookieOptions = {
+
+    httpOnly: true,
+
+    sameSite:
+        COOKIE_SAME_SITE,
+
+    secure:
+        COOKIE_SECURE,
+
+    maxAge:
+        24 * 60 * 60 * 1000
+};
+
 
 app.use(
     session({
+
         secret:
             process.env.SESSION_SECRET,
 
@@ -324,53 +405,35 @@ app.use(
 
         saveUninitialized: false,
 
-        cookie: {
-            httpOnly: true,
-            sameSite: "lax",
-            secure: false,
-            maxAge:
-                24 * 60 * 60 * 1000
-        }
+        cookie:
+            sessionCookieOptions
     })
 );
 
 
-/*
-==================================================
-AUTHENTICATION CONFIG
-==================================================
-*/
+// ==================================================
+// AUTHENTICATION CONFIG
+// ==================================================
 
 const CLOUD_USERNAME =
-    process.env.CLOUD_USERNAME || "";
+    process.env.CLOUD_USERNAME;
 
 const CLOUD_PASSWORD =
-    process.env.CLOUD_PASSWORD || "";
+    process.env.CLOUD_PASSWORD;
 
 
-/*
-    For this first version, the password from
-    .env is converted into a bcrypt hash when
-    the server starts.
-
-    The actual password remains in .env and is
-    not written into this source code.
-*/
-
+// Convert password from .env
+// into a bcrypt hash when server starts.
 const CLOUD_PASSWORD_HASH =
-    CLOUD_PASSWORD
-        ? bcrypt.hashSync(
-            CLOUD_PASSWORD,
-            12
-        )
-        : "";
+    bcrypt.hashSync(
+        CLOUD_PASSWORD,
+        12
+    );
 
 
-/*
-==================================================
-REQUIRE LOGIN
-==================================================
-*/
+// ==================================================
+// REQUIRE LOGIN
+// ==================================================
 
 function requireLogin(
     req,
@@ -392,14 +455,13 @@ function requireLogin(
 }
 
 
-/*
-==================================================
-LOGIN
-==================================================
-*/
+// ==================================================
+// LOGIN
+// ==================================================
 
 app.post(
     "/api/login",
+
     async function (
         req,
         res
@@ -435,12 +497,10 @@ app.post(
 
 
             const passwordCorrect =
-                CLOUD_PASSWORD_HASH
-                    ? await bcrypt.compare(
-                        password,
-                        CLOUD_PASSWORD_HASH
-                    )
-                    : false;
+                await bcrypt.compare(
+                    password,
+                    CLOUD_PASSWORD_HASH
+                );
 
 
             if (
@@ -469,7 +529,6 @@ app.post(
 
                 username:
                     username
-
             });
 
         } catch (error) {
@@ -488,14 +547,13 @@ app.post(
 );
 
 
-/*
-==================================================
-CURRENT USER
-==================================================
-*/
+// ==================================================
+// CURRENT USER
+// ==================================================
 
 app.get(
     "/api/me",
+
     function (
         req,
         res
@@ -513,7 +571,6 @@ app.get(
 
                 error:
                     "Not logged in"
-
             });
         }
 
@@ -525,20 +582,18 @@ app.get(
 
             username:
                 req.session.username
-
         });
     }
 );
 
 
-/*
-==================================================
-LOGOUT
-==================================================
-*/
+// ==================================================
+// LOGOUT
+// ==================================================
 
 app.post(
     "/api/logout",
+
     function (
         req,
         res
@@ -562,7 +617,16 @@ app.post(
 
 
                 res.clearCookie(
-                    "connect.sid"
+                    "connect.sid",
+                    {
+                        httpOnly: true,
+
+                        sameSite:
+                            COOKIE_SAME_SITE,
+
+                        secure:
+                            COOKIE_SECURE
+                    }
                 );
 
 
@@ -576,21 +640,20 @@ app.post(
 );
 
 
-/*
-==================================================
-PROTECT API ROUTES
-==================================================
-*/
+// ==================================================
+// PROTECT API ROUTES
+// ==================================================
 
 app.use(
     "/api",
+
     function (
         req,
         res,
         next
     ) {
 
-        // Login must be public
+        // Login is public
         if (
             req.path === "/login" &&
             req.method === "POST"
@@ -599,8 +662,8 @@ app.use(
         }
 
 
-        // /api/me must be public so it
-        // can report authentication status
+        // /api/me is public
+        // so frontend can check login state
         if (
             req.path === "/me" &&
             req.method === "GET"
@@ -609,8 +672,7 @@ app.use(
         }
 
 
-        // Logout must be accessible to
-        // an authenticated user
+        // Logout is public
         if (
             req.path === "/logout" &&
             req.method === "POST"
@@ -619,7 +681,7 @@ app.use(
         }
 
 
-        // Health check remains public
+        // Health check is public
         if (
             req.path === "/health" &&
             req.method === "GET"
@@ -637,115 +699,9 @@ app.use(
 );
 
 
-/*
-==================================================
-ROOT PAGE
-==================================================
-*/
-
-app.get(
-    "/",
-    function (
-        req,
-        res
-    ) {
-
-        if (
-            req.session &&
-            req.session.authenticated === true
-        ) {
-
-            return res.sendFile(
-                path.join(
-                    __dirname,
-                    "public",
-                    "index.html"
-                )
-            );
-        }
-
-
-        return res.redirect(
-            "/login.html"
-        );
-    }
-);
-
-
-/*
-==================================================
-LOGIN PAGE
-==================================================
-*/
-
-app.get(
-    "/login.html",
-    function (
-        req,
-        res
-    ) {
-
-        return res.sendFile(
-            path.join(
-                __dirname,
-                "public",
-                "login.html"
-            )
-        );
-    }
-);
-
-
-/*
-==================================================
-PROTECT STATIC CLOUD FILES
-==================================================
-*/
-
-app.use(
-    function (
-        req,
-        res,
-        next
-    ) {
-
-        if (
-            req.path === "/login.html"
-        ) {
-            return next();
-        }
-
-
-        if (
-            req.session &&
-            req.session.authenticated === true
-        ) {
-            return next();
-        }
-
-
-        return res.redirect(
-            "/login.html"
-        );
-    }
-);
-
-
-app.use(
-    express.static(
-        path.join(
-            __dirname,
-            "public"
-        )
-    )
-);
-
-
-/*
-==================================================
-HEALTH
-==================================================
-*/
+// ==================================================
+// HEALTH CHECK
+// ==================================================
 
 app.get(
     "/api/health",
@@ -755,22 +711,20 @@ app.get(
         res
     ) {
 
-        res.json({
+        return res.json({
             status: "ok"
         });
-
     }
 );
 
 
-/*
-==================================================
-LIST FILES AND FOLDERS
-==================================================
-*/
+// ==================================================
+// LIST FILES AND FOLDERS
+// ==================================================
 
 app.get(
     "/api/files",
+
     function (
         req,
         res
@@ -799,7 +753,8 @@ app.get(
                 });
             }
 
-                        if (
+
+            if (
                 !fs.existsSync(
                     folderPath
                 )
@@ -875,7 +830,6 @@ app.get(
                         stats.isDirectory()
                             ? 0
                             : stats.size
-
                 });
             }
 
@@ -911,38 +865,35 @@ app.get(
             );
 
 
-            res.json({
+            return res.json({
 
                 currentFolder:
                     folder,
 
                 items:
                     items
-
             });
 
         } catch (error) {
 
             console.error(error);
 
-            res.status(500).json({
+            return res.status(500).json({
                 error:
                     "Unable to list files"
             });
         }
-
     }
 );
 
 
-/*
-==================================================
-CREATE FOLDER
-==================================================
-*/
+// ==================================================
+// CREATE FOLDER
+// ==================================================
 
 app.post(
     "/api/folders",
+
     function (
         req,
         res
@@ -1034,38 +985,35 @@ app.post(
             );
 
 
-            res.json({
+            return res.json({
 
                 message:
                     "Folder created successfully",
 
                 name:
                     folderName
-
             });
 
         } catch (error) {
 
             console.error(error);
 
-            res.status(500).json({
+            return res.status(500).json({
                 error:
                     "Unable to create folder"
             });
         }
-
     }
 );
 
 
-/*
-==================================================
-DOWNLOAD FILE
-==================================================
-*/
+// ==================================================
+// DOWNLOAD FILE
+// ==================================================
 
 app.get(
     "/api/download",
+
     function (
         req,
         res
@@ -1116,7 +1064,7 @@ app.get(
             }
 
 
-            res.download(
+            return res.download(
                 filePath
             );
 
@@ -1124,24 +1072,22 @@ app.get(
 
             console.error(error);
 
-            res.status(500).json({
+            return res.status(500).json({
                 error:
                     "Unable to download file"
             });
         }
-
     }
 );
 
 
-/*
-==================================================
-DOWNLOAD FOLDER AS ZIP
-==================================================
-*/
+// ==================================================
+// DOWNLOAD FOLDER AS ZIP
+// ==================================================
 
 app.get(
     "/api/download-folder",
+
     function (
         req,
         res
@@ -1252,7 +1198,6 @@ app.get(
                     } else {
 
                         res.end();
-
                     }
                 }
             );
@@ -1277,25 +1222,23 @@ app.get(
                 !res.headersSent
             ) {
 
-                res.status(500).json({
+                return res.status(500).json({
                     error:
                         "Unable to download folder"
                 });
             }
         }
-
     }
 );
 
 
-/*
-==================================================
-DELETE FILE OR FOLDER
-==================================================
-*/
+// ==================================================
+// DELETE FILE OR FOLDER
+// ==================================================
 
 app.delete(
     "/api/files",
+
     function (
         req,
         res
@@ -1322,6 +1265,7 @@ app.delete(
             }
 
 
+            // Never allow deletion of storage root
             if (
                 targetPath === storageDir
             ) {
@@ -1352,7 +1296,6 @@ app.delete(
                 );
 
 
-            // Delete file or entire folder
             fs.rmSync(
                 targetPath,
                 {
@@ -1365,37 +1308,34 @@ app.delete(
             );
 
 
-            res.json({
+            return res.json({
 
                 message:
                     stats.isDirectory()
                         ? "Folder deleted successfully"
                         : "File deleted successfully"
-
             });
 
         } catch (error) {
 
             console.error(error);
 
-            res.status(500).json({
+            return res.status(500).json({
                 error:
                     "Unable to delete"
             });
         }
-
     }
 );
 
 
-/*
-==================================================
-RENAME
-==================================================
-*/
+// ==================================================
+// RENAME
+// ==================================================
 
 app.put(
     "/api/files",
+
     function (
         req,
         res
@@ -1405,7 +1345,6 @@ app.put(
 
             const oldPath =
                 req.query.path || "";
-
 
             const newName =
                 safeFilename(
@@ -1437,6 +1376,7 @@ app.put(
             }
 
 
+            // Never allow renaming storage root
             if (
                 oldFullPath === storageDir
             ) {
@@ -1506,7 +1446,7 @@ app.put(
             );
 
 
-            res.json({
+            return res.json({
 
                 message:
                     "Renamed successfully",
@@ -1518,31 +1458,28 @@ app.put(
 
                 newName:
                     newName
-
             });
 
         } catch (error) {
 
             console.error(error);
 
-            res.status(500).json({
+            return res.status(500).json({
                 error:
                     "Unable to rename"
             });
         }
-
     }
 );
 
 
-/*
-==================================================
-UPLOAD
-==================================================
-*/
+// ==================================================
+// UPLOAD
+// ==================================================
 
 app.post(
     "/api/upload",
+
     function (
         req,
         res
@@ -1551,6 +1488,7 @@ app.post(
         upload.single("file")(
             req,
             res,
+
             function (
                 error
             ) {
@@ -1588,7 +1526,7 @@ app.post(
                 }
 
 
-                res.json({
+                return res.json({
 
                     message:
                         "File uploaded successfully",
@@ -1603,31 +1541,152 @@ app.post(
 
                         folder:
                             req.query.folder || ""
-
                     }
-
                 });
-
             }
         );
-
     }
 );
 
 
-/*
-==================================================
-START SERVER
-==================================================
-*/
+// ==================================================
+// ROOT PAGE
+// ==================================================
+
+app.get(
+    "/",
+
+    function (
+        req,
+        res
+    ) {
+
+        if (
+            req.session &&
+            req.session.authenticated === true
+        ) {
+
+            return res.sendFile(
+                path.join(
+                    __dirname,
+                    "public",
+                    "index.html"
+                )
+            );
+        }
+
+
+        return res.redirect(
+            "/login.html"
+        );
+    }
+);
+
+
+// ==================================================
+// LOGIN PAGE
+// ==================================================
+
+app.get(
+    "/login.html",
+
+    function (
+        req,
+        res
+    ) {
+
+        return res.sendFile(
+            path.join(
+                __dirname,
+                "public",
+                "login.html"
+            )
+        );
+    }
+);
+
+
+// ==================================================
+// PROTECT STATIC CLOUD FILES
+// ==================================================
+
+app.use(
+    function (
+        req,
+        res,
+        next
+    ) {
+
+        // These files are required
+        // by the login page.
+        const publicPaths = [
+            "/login.html",
+            "/config.js",
+            "/style.css"
+        ];
+
+
+        if (
+            publicPaths.includes(
+                req.path
+            )
+        ) {
+            return next();
+        }
+
+
+        if (
+            req.session &&
+            req.session.authenticated === true
+        ) {
+            return next();
+        }
+
+
+        return res.redirect(
+            "/login.html"
+        );
+    }
+);
+
+
+// ==================================================
+// STATIC FRONTEND FILES
+// ==================================================
+
+app.use(
+    express.static(
+        path.join(
+            __dirname,
+            "public"
+        )
+    )
+);
+
+
+// ==================================================
+// START SERVER
+// ==================================================
 
 app.listen(
     PORT,
+
     function () {
 
         console.log(
             `Personal Cloud running at http://localhost:${PORT}`
         );
 
+        console.log(
+            `CORS origin: ${CORS_ORIGIN}`
+        );
+
+        console.log(
+            `Cookie secure: ${COOKIE_SECURE}`
+        );
+
+        console.log(
+            `Cookie SameSite: ${COOKIE_SAME_SITE}`
+        );
     }
 );
